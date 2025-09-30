@@ -21,8 +21,11 @@ In today's lab you will...
 ## Setup
 
 ```{r}
+# Load libraries
 library(tidyverse)
 library(palmerpenguins)
+
+# Set default theme
 theme_set(theme_bw(18))
 
 ```
@@ -30,6 +33,7 @@ theme_set(theme_bw(18))
 We'll use the `penguins` dataset for today's lab. Refresh your memory of what it looks like with `glimpse()`.
 
 ```{r}
+
 glimpse(penguins)
 
 ```
@@ -59,7 +63,7 @@ The tidyverse `count()` function will give you a contingency table in long forma
 
 ```{r}
 penguins %>% 
-  count(species, island)
+  count(species, island, species)
 
 ```
 
@@ -67,7 +71,9 @@ penguins %>%
 
 ```{r}
 #| label: q1
-
+pivot_penguins <- penguins %>% 
+  count(species, island) %>% 
+  pivot_wider(names_from = island, values_from = n, values_fill = 0)
 
 
 ```
@@ -96,8 +102,15 @@ prop.table(species_island_table, margin = 2)
 
 ```{r}
 #| label: q2
+penguins %>% 
+  count(species, island) %>% 
+  group_by(species) %>% 
+  mutate(prop = n / sum(n))
 
-
+penguins %>% 
+  count(species, island) %>% 
+  group_by(island) %>% 
+  mutate(prop = n / sum(n))
 
 ```
 
@@ -117,7 +130,8 @@ ggplot(penguins, aes(species)) +
 
 ```{r}
 #| label: q3
-
+ggplot(penguins, aes(species, fill = island)) +
+  geom_bar()
 
 
 ```
@@ -151,6 +165,8 @@ penguins %>%
 
 **Q5 What's the difference between a histogram and a bar plot?**
 
+A histogram bins data to record frequencies whereas bar plots count frequencies of categorical data
+
 ### Mean and standard deviation
 
 Recall that parameters and statistics are numerical summaries of populations and samples, respectively. Mean and standard deviation are useful summaries, but be careful as they can hide important differences.
@@ -164,8 +180,18 @@ As a rule of thumb, about 68% of a sample's data will fall within one standard d
 ```{r}
 #| label: q6
 
+#penguins %>% 
+#  #group_by(species) %>% 
+#  summarize(mean = mean(body_mass_g, na.rm = TRUE), std_dev = sd(body_mass_g, na##.rm = TRUE), num_sd = mean %/% std_dev)
 
 
+body_masses <- penguins$body_mass_g[!is.na(penguins$body_mass_g)]
+mean <- mean(body_masses)
+sd <- sd(body_masses)
+
+min1sd <- mean(body_masses >= mean - sd & body_masses <= mean + sd)
+
+min2sd <- mean(body_masses >= mean - 2*sd & body_masses <= mean + 2*sd)
 ```
 
 ### Scatterplots for paired data
@@ -174,8 +200,9 @@ Scatter plots depict relationships between variables.
 
 ```{r}
 penguins %>% 
-  ggplot(aes(bill_length_mm, bill_depth_mm)) +
-  geom_point() 
+  ggplot(aes(bill_length_mm, bill_depth_mm, color = species)) +
+  geom_point() + 
+  geom_smooth(method = 'lm', aes(color = species))
 
 ```
 
@@ -187,7 +214,9 @@ This is an example of *Simpson's paradox*, which is when between-group correlati
 
 ```{r}
 #| label: q7
-
+penguins %>% 
+  ggplot(aes(bill_length_mm, bill_depth_mm, color = species)) +
+  geom_point() 
 
 
 ```
@@ -212,6 +241,31 @@ Find a dataset containing multiple categorical and continuous variables. You'll 
 2.  Bar plot
 3.  Histogram
 4.  Scatterplot
+
+```{r}
+df <- read_csv("women-stem.csv")
+
+ggplot(df, aes(x = ShareWomen, y = Median, color = Major_category)) +
+  geom_point() + 
+  geom_smooth(method = "lm", color = "black") +
+  labs(title = "Median Salary vs. Share of Women Across College Majors",
+       x = "Share of Women",
+       y = "Median Salary",
+       color = "Major Category",
+       caption = paste(
+         stringr::str_wrap("In this figure, each point represents a college major. The results suggsest that majors with lower percentages of women tend to have higher salaries."), 
+         stringr::str_wrap("Source: FiveThirtyEight. (2015). College majors: women-stem.csv [Data set]. GitHub. https://github.com/fivethirtyeight/data/blob/master/college-majors/women-stem.csv. License: CC BY 4.0, https://creativecommons.org/licenses/by/4.0/."),
+       sep = "\n"
+       )) +
+  theme(plot.title = element_text(hjust = 0.5, size = 12),
+        axis.title.x = element_text(size = 12),
+        axis.title.y = element_text(size = 12),
+        plot.caption = element_text(hjust = 0.5, size = 8)) +
+  theme_minimal() 
+
+ggsave("women_salary.png")
+
+```
 
 ## Finished?
 
