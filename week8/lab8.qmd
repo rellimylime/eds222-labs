@@ -1,0 +1,483 @@
+---
+title: "Lab 8"
+subtitle: "California Wildfire Occurrence"
+toc: true
+editor: visual
+format:
+  html:
+    other-links:
+      - text: Download Source
+        href: lab8.qmd
+      - text: Wildfire Data
+        href: data/wildfires.zip
+editor_options: 
+  chunk_output_type: inline
+bibliography: references.bib
+---
+
+## Learning objectives
+
+In today's lab you will...
+
+1.  Fit a **Poisson regression** model to count outcomes
+2.  **Visualize** predictions
+3.  **Compare** properly and improperly specified models
+
+Complete sections **Poisson model notation and R code** and **Read and explore the data** before lab.
+
+```{r}
+#| label: setup
+#| message: false
+#| warning: false
+
+library(tidyverse)
+library(terra)
+library(tidyterra)
+library(sf)
+library(tmap)
+
+theme_set(theme_classic(12))
+set.seed(123)
+
+```
+
+## Poisson model notation and R code
+
+In statistical notation, Poisson models take the form:
+
+$$
+\begin{align}
+\text{CountOutcome} &\sim Poisson(\lambda) \\
+log(\lambda) &= \beta_0 + \beta_1 \text{Predictor}
+\end{align}
+$$
+
+In R, you can fit a poisson model like this:
+
+``` r
+poisson_model <- glm(count_outcome ~ predictor,
+                     data = my_data,
+                     family = poisson(link = "log"))
+```
+
+**Compare Poisson and logistic regression. Which of the following change between them?**
+
+-   **Response family**: Poisson
+
+-   **Link function**: Log
+
+-   **Response**: \# wild fires (count_outcome)
+
+-   **Predictor**: vapor pressure deficit
+
+## Read and explore the data
+
+**Download and unzip wildfire.zip. Read the spatial and tabular data.** This includes:
+
+-   A wildfire shapefile
+
+-   A vapor pressure deficit (VPD) raster
+
+-   A table of annual vapor pressure deficit and wildfire data
+
+```{r}
+#| label: read-data
+
+vpd <- rast(here::here("week8", "vpd.tiff"))
+
+wildfires <- vect(here::here("week8", "wildfires.shp"))
+
+```
+
+**Recreate the three figures below.** Yours don't have to be exact replicates, but they should communicate the same messages.
+
+Figure 1: A scatter plot showing the relationship between vapor pressure deficit and wildfire occurence.
+
+![](vpd_fires.png)
+
+```{r}
+#| label: fig-explore
+
+print(vpd)
+
+# Filter for large wildfires and count by year
+lg_wildfires_counts <- wildfires %>% 
+  as.data.frame() %>% 
+  filter(acres >= 10000) %>% 
+  group_by(fire_year) %>% 
+  summarise(n_fires = n())
+
+# Find the mean vpd for each year and prep data for merging
+vpd_df <- as.data.frame(vpd, xy = FALSE) %>% 
+  summarise(across(everything(), mean, na.rm = TRUE)) %>% 
+  pivot_longer(everything(), names_to = "fire_year", values_to = "mean_vpd_kpa") %>% 
+  mutate(fire_year = as.numeric(fire_year))
+
+# Join the vpd and wildfire datasets
+fire_vpd_data <- lg_wildfires_counts %>% 
+  left_join(vpd_df, by = "fire_year") 
+```
+
+```{r}
+# Plot Mean VPD vs Fire counts per year
+ggplot(fire_vpd_data, 
+       aes(x = mean_vpd_kpa, y = n_fires, fill = fire_year)) +
+  geom_point(shape = 21,
+             size = 4,
+             color = "white") +
+  scale_fill_viridis_b(
+    name = "Year",
+    option = "plasma",
+    breaks = c(1990, 2000, 2010, 2020)) +
+  labs(x = "Mean VPD (kPa)",
+       y = "Fires >10k acres (n)") +
+  geom_label(
+    data = filter(fire_vpd_data, fire_year == 2007),
+    aes(label = fire_year),
+    fill = "white",
+    color = "black",
+    nudge_x = -.1) +
+  geom_segment(
+    data = filter(fire_vpd_data, fire_year == 2007),
+    aes(x = mean_vpd_kpa -.069,
+        y = n_fires,
+        xend = mean_vpd_kpa,
+        yend = n_fires),
+    color = "black",
+    linewidth = 0.8,
+    lineend = "round")
+```
+
+Figure 2: Maps of summer VPD in 1980, 2000, and 2020.
+
+![](vpd_maps.png)
+
+```{r}
+#| label: fig-explore
+
+vpd_3year <- vpd %>% 
+  select("1980", "2000", "2020")
+
+ggplot() +
+  geom_spatraster(data = vpd_3year) +
+  facet_wrap(~lyr, ncol = 3) +
+  scale_fill_viridis_c(name = "VPD (kPa)",
+                       option = "viridis",
+                       na.value = "transparent") +
+  scale_x_continuous(breaks = seq(-125, -113, by = 4)) +
+  scale_y_continuous(breaks = seq(31, 43, by = 4)) +
+  coord_sf(xlim = c(-125, -113), ylim = c(31, 43)) +
+  theme_light() +
+  theme(
+    panel.background = element_blank(),
+    panel.border = element_blank(),
+    panel.grid.major = element_line(color = alpha("grey80", 0.5), linewidth = 0.5),
+    panel.ontop = TRUE,
+    strip.background = element_rect(fill = "gray70", color = NA),
+    strip.text = element_text(color = "black", size = 12),
+    legend.position = "bottom",
+    legend.key.width = unit(2, "cm"),
+    legend.key.height = unit(0.4, "cm"),
+    axis.text = element_text(size = 9)
+  )
+```
+
+Figure 3: Maps of wildfires in 1980, 2000, and 2020.
+
+![](fire_maps.png)
+
+```{r}
+#| label: fig-explore
+
+# Create California boundary from vpd raster FIRST
+ca_boundary <- st_as_sf(as.polygons(vpd[[1]] > -Inf, dissolve = TRUE))
+
+# Filter wildfires for the three years (remove quotes if fire_year is numeric)
+wildfires_3year <- wildfires %>% 
+  filter(fire_year %in% c(1980, 2000, 2020)) %>% 
+  st_as_sf()
+
+# Now plot
+ggplot() +
+  geom_sf(data = ca_boundary, fill = "lightblue", color = "grey30",
+          linewidth = 0.1) +
+  geom_sf(data = wildfires_3year, color = NA, fill = "darkred", size = 0.8) +
+  facet_wrap(~fire_year, ncol = 3) +
+  scale_x_continuous(breaks = seq(-125, -113, by = 4)) +
+  scale_y_continuous(breaks = seq(31, 43, by = 4)) +
+  coord_sf(xlim = c(-125, -113), ylim = c(31, 43)) +
+  theme_light() +
+  theme(
+    panel.background = element_blank(),
+    panel.border = element_blank(),
+    panel.grid.major = element_line(color = alpha("grey80", 0.5), linewidth = 0.5),
+    panel.ontop = TRUE,
+    strip.background = element_rect(fill = "gray70", color = NA),
+    strip.text = element_text(color = "black", size = 12),
+    legend.position = "none",
+    axis.text = element_text(size = 9)
+  )
+```
+
+```{r}
+
+```
+
+## Fit model
+
+Our question is:
+
+*How is the occurrence of wildfires in California associated with the previous summer's vapor pressure deficit?*
+
+For more details about vapor pressure deficit and its relationship with fires, see @abatzoglou2016 and @seager2015.
+
+**Fit a poisson model to see how `n_fires` responds to `mean_vpd_kpa`**.
+
+```{r}
+#| label: fit-model
+
+# Fit Poisson regression model
+pois_mod <- glm(n_fires ~ mean_vpd_kpa,
+                data = fire_vpd_data,
+                family = poisson(link = "log"))
+
+# View model summary
+summary(pois_mod)
+
+# Get confidence intervals for coefficients
+confint(pois_mod)
+```
+
+## Make predictions
+
+As with logistic regression, the coefficients of a Poisson regression model are not terribly intuitive. Once again, we will interpret our model by visualizing predictions. Refer to lab 7 for details about how to generate predictions and CIs for a generalized linear model.
+
+**Generate predictions and a CI for the number of fires in the range of VPD values in the dataset.**
+
+```{r}
+#| label: predict-fires
+
+# Create predictor grid spanning range of VPD values
+new_vpd_data <- expand_grid(mean_vpd_kpa = seq(min(fire_vpd_data$mean_vpd_kpa, na.rm = TRUE),
+                    max(fire_vpd_data$mean_vpd_kpa, na.rm = TRUE),
+                    length.out = 100))
+
+# Get predictions on link scale with standard errors
+link_predictions <- predict(pois_mod,
+                            newdata = new_vpd_data,
+                            type = "link",
+                            se.fit = TRUE)
+```
+
+```{r}
+#| eval: false
+#| include: false
+
+# Calculated CI using exp (inverse of log)
+fire_predictions <- new_vpd_data %>% 
+  mutate(fit_link = link_predictions$fit,
+         se_link = link_predictions$se.fit,
+         pred_fires = exp(fit_link),
+         lower = exp(fit_link - 1.96 * se_link),
+         upper = exp(fit_link + 1.96 * se_link))
+
+```
+
+**Plot the raw data with the predictions. Your figure should look something like the figure below.**
+
+![](images/fire_preds.png){width="525"}
+
+```{r}
+#| label: plot-predictions
+#| eval: false
+#| include: false
+
+ggplot() +
+  # Raw data points
+  geom_point(data = fire_vpd_data, 
+             aes(x = mean_vpd_kpa, y = n_fires),
+             alpha = 0.5, size = 2) +
+  # 95% CI ribbon
+  geom_ribbon(data = fire_predictions,
+              aes(x = mean_vpd_kpa, ymin = lower, ymax = upper),
+              alpha = 0.3, fill = "blue") +
+  # Best estimate line
+  geom_line(data = fire_predictions, 
+            aes(x = mean_vpd_kpa, y = pred_fires),
+            color = "blue", linewidth = 1) +
+  labs(x = "Mean VPD (kPa)",
+       y = "Number of Large Fires",
+       title = "Predicted Number of Large Wildfires vs VPD") +
+  theme_classic()
+```
+
+```{r}
+fire_predictions <- new_vpd_data %>% 
+  mutate(log_lambda = link_predictions$fit,
+         log_lambda_se = link_predictions$se.fit,
+         log_lambda_lwr = qnorm(c(0.025), mean = log_lambda, sd = log_lambda_se),
+         log_lambda_upr = qnorm(c(0.975), mean = log_lambda, sd = log_lambda_se),
+         lambda = exp(log_lambda),
+         lambda_lwr = exp(log_lambda_lwr),
+         lambda_upr = exp(log_lambda_upr))
+
+pois_plot <- ggplot() +
+  # Raw data points
+  geom_point(data = fire_vpd_data, 
+             aes(x = mean_vpd_kpa, y = n_fires),
+             alpha = 0.5, size = 2) +
+  # 95% CI ribbon
+  geom_ribbon(data = fire_predictions,
+              aes(x = mean_vpd_kpa, ymin = lambda_lwr, ymax = lambda_upr),
+              alpha = 0.3, fill = "blue") +
+  # Best estimate line
+  geom_line(data = fire_predictions, 
+            aes(x = mean_vpd_kpa, y = lambda),
+            color = "blue", linewidth = 1) +
+  labs(x = "Mean VPD (kPa)",
+       y = "Number of Large Fires",
+       title = "Predicted Number of Large Wildfires vs VPD") +
+  theme_classic()
+
+pois_plot
+```
+
+## **Compare** properly and improperly specified models
+
+Seeing a scatter plot of mean VPD and the number of fires in a year, an uncritical statistics student may think to fit a linear model. But the fact that the response is a *count* should suggest another approach is necessary. Contrast the model summary and predictions from your Poisson model against a linear model.
+
+1.  Create a new model using `lm()`.
+2.  Compare the summaries of your Poisson model and the linear model.\
+    **Is the coefficient for `mean_vpd_kpa` significant in both models? What does that mean for your inferences?**
+3.  Use predictions and components of the linear model to answer the following questions.\
+    **What is the estimate for** $\sigma$ **in your linear model?\
+    What does the linear model predict** $\mu$ **is** **when the VPD is at the minimum value in the dataset?\
+    What is the 95% interval for the predicted number of fires for that mean and standard deviation (hint: use `qnorm()`)?\
+    Why doesn't that interval make any sense?**
+
+**Based on your answers to the questions above, why is using a properly specified model important?**
+
+```{r}
+#| label: compare-models
+
+# Fit linear model (WRONG for count data!)
+linear_model <- lm(n_fires ~ mean_vpd_kpa,
+                   data = fire_vpd_data)
+
+# Compare summaries
+summary(pois_mod)
+summary(linear_model)
+
+# Create predictions for the linear model using qnorm()
+linear_predictions <- new_vpd_data %>% 
+  mutate(mu = predict(linear_model, newdata = new_vpd_data),
+         mu_se = predict(linear_model, newdata = new_vpd_data, se.fit = TRUE)$se.fit,
+         mu_lower = qnorm(0.025, mean = mu, sd = mu_se),
+         mu_upper = qnorm(0.975, mean = mu, sd = mu_se))
+```
+
+```{r}
+# Extract p-values for comparison
+poisson_pval <- summary(pois_mod)$coefficients["mean_vpd_kpa", 4]
+poisson_pval
+linear_pval <- summary(linear_model)$coefficients["mean_vpd_kpa", 4]
+linear_pval
+
+# Examine linear model predictions at minimum VPD
+min_vpd <- min(fire_vpd_data$mean_vpd_kpa, na.rm = TRUE)
+
+# Extract sigma (residual standard error)
+sigma_hat <- summary(linear_model)$sigma
+
+# Get predicted mu at minimum VPD
+pred_at_min <- predict(linear_model, 
+                       newdata = data.frame(mean_vpd_kpa = min_vpd))
+
+# Calculate 95% prediction interval using normal distribution
+# This assumes n_fires ~ Normal(mu, sigma)
+lower_95 <- pred_at_min + qnorm(0.025) * sigma_hat
+upper_95 <- pred_at_min + qnorm(0.975) * sigma_hat
+```
+
+```{r}
+lin_plot <- ggplot() +
+  # Raw data points
+  geom_point(data = fire_vpd_data, 
+             aes(x = mean_vpd_kpa, y = n_fires),
+             alpha = 0.5, size = 2) +
+  # 95% CI ribbon
+  geom_ribbon(data = linear_predictions,
+              aes(x = mean_vpd_kpa, ymin = mu_lower, ymax = mu_upper),
+              alpha = 0.3, fill = "red") +
+  # Best estimate line
+  geom_line(data = linear_predictions, 
+            aes(x = mean_vpd_kpa, y = mu),
+            color = "red", linewidth = 1) +
+  labs(x = "Mean VPD (kPa)",
+       y = "Number of Large Fires",
+       title = "Predicted Number of Large Wildfires vs VPD") +
+  theme_classic()
+
+lin_plot
+```
+
+```{r}
+pois_lin_plot <- ggplot() +
+  # Raw data points
+  geom_point(data = fire_vpd_data, 
+             aes(x = mean_vpd_kpa, y = n_fires),
+             alpha = 0.5, size = 2) +
+  # 95% CI ribbon
+  geom_ribbon(data = linear_predictions,
+              aes(x = mean_vpd_kpa, ymin = mu_lower, ymax = mu_upper),
+              alpha = 0.3, fill = "red") +
+  # Best estimate line
+  geom_line(data = linear_predictions, 
+            aes(x = mean_vpd_kpa, y = mu),
+            color = "red", linewidth = 1) +
+  geom_ribbon(data = fire_predictions,
+              aes(x = mean_vpd_kpa, ymin = lambda_lwr, ymax = lambda_upr),
+              alpha = 0.3, fill = "blue") +
+  # Best estimate line
+  geom_line(data = fire_predictions, 
+            aes(x = mean_vpd_kpa, y = lambda),
+            color = "blue", linewidth = 1) +
+  labs(x = "Mean VPD (kPa)",
+       y = "Number of Large Fires",
+       title = "Predicted Number of Large Wildfires vs VPD") +
+  theme_classic()
+
+pois_lin_plot
+```
+
+```{r}
+qpois(c(.025, .975), lambda = 6)
+```
+
+```{r}
+qnorm(c(0.025, 0.975), mean = 6, sd = 8.46)
+```
+
+**Is the coefficient for `mean_vpd_kpa` significant in both models? What does that mean for your inferences?**
+
+Yes, the coefficient is significant in both models. The Poisson model has p-value = `r format.pval(poisson_pval, digits = 3)` and the linear model has p-value = `r format.pval(linear_pval, digits = 3)`. This means both models detect a significant relationship between VPD and fire occurrence, but only the Poisson model provides appropriate predictions for count data.
+
+**What is the estimate for σ in your linear model?**
+
+The estimated σ (residual standard error) is `r round(sigma_hat, 2)`.
+
+**What does the linear model predict μ is when the VPD is at the minimum value in the dataset?**
+
+At the minimum VPD value of `r round(min_vpd, 2)` kPa, the linear model predicts μ = `r round(pred_at_min, 2)` fires.
+
+**What is the 95% interval for the predicted number of fires for that mean and standard deviation?**
+
+The 95% prediction interval is \[`r round(lower_95, 2)`, `r round(upper_95, 2)`\].
+
+**Why doesn't that interval make any sense?**
+
+The lower bound is `r round(lower_95, 2)`, which is negative! You cannot have negative fires. This violates the basic constraint that counts must be non-negative integers (0, 1, 2, ...). The linear model assumes normally distributed errors with constant variance, which is inappropriate for count data.
+
+**Based on your answers to the questions above, why is using a properly specified model important?**
+
+Using a properly specified model is critical because the linear model produces physically impossible predictions. The Poisson model respects the count nature of the data by: (1) only predicting non-negative values, (2) modeling variance as increasing with the mean, and (3) using the log link to ensure exp(predictions) ≥ 0. While both models detect the significant relationship, only the Poisson model provides trustworthy predictions for decision-making.

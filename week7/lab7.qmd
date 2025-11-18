@@ -1,0 +1,377 @@
+---
+title: "Lab 7"
+subtitle: "The Color of Drinking Water"
+toc: true
+editor: visual
+format:
+  html:
+    other-links:
+      - text: Download Source
+        href: lab7.qmd
+      - text: Drinking Water Data
+        href: data/drinking_water.csv
+editor_options: 
+  chunk_output_type: console
+---
+
+## Learning objectives
+
+In today's lab you will...
+
+1.  Fit **logistic regression** models to binary (0/1, no/yes) outcomes
+2.  Interpret **coefficients**
+3.  **Visualize** predictions
+
+Complete sections **Logistic model notation and R code** and **Read and explore the data** before class.
+
+```{r}
+#| label: setup
+#| message: false
+#| warning: false
+
+library(tidyverse)
+theme_set(theme_classic(12))
+set.seed(123)
+
+```
+
+## Logistic model notation and R code
+
+In statistical notation, logistic models take the form:
+
+$$
+\begin{align}
+\text{BinaryOutcome} &\sim Binomial(1, p) \\
+logit(p) &= \beta_0 + \beta_1 \text{Predictor}
+\end{align}
+$$
+
+In R, you can fit a logistic model like this:
+
+``` r
+logistic_model <- glm(binary_outcome ~ predictor,
+                      data = my_data,
+                      family = binomial(link = "logit"))
+```
+
+**In both the notation and code above, identify the:**
+
+-   **Response family**: Binomial
+
+-   **Link function**: Logit
+
+-   **Response**: binary_outcome (0/1 or TRUE/FALSE)
+
+-   **Predictor**: predictor variable
+
+## Read and explore the data
+
+**Read the dataset in drinking_water.csv.**
+
+```{r}
+#| label: read-data
+
+drinking_water <- read_csv("data/drinking_water.csv")
+
+```
+
+**Describe what you think each of the columns represents.**
+
+| Column | Meaning |
+|----|----|
+| `pwsid` | Public Water System ID - unique identifier for each district |
+| `pwsname` | Public Water System name |
+| `pctpov` | Percent of households below poverty line |
+| `pcthisp` | Percent Hispanic population |
+| `health` | Health-based violations indicator |
+| `medianincomehouse` | Median household income |
+| `violation` | Binary indicator of SDWA (Safe Drinking Water Act) violation |
+| `pcthisp_bin` | Binned categories of percent Hispanic |
+| `pctpov_bin` | Binned categories of percent below poverty |
+
+**Create three figures summarizing the relationships between race, class, and SDWA violations.**
+
+Figure 1: A scatter plot showing the *proportion* of districts with SDWA violations in each *percent Hispanic bin*.
+
+Figure 2: A scatter plot showing the *proportion* of districts with SDWA violations in each *percent below-poverty bin*.
+
+Figure 3: A scatter plot showing the correlation between *percent Hispanic* and *percent below-poverty* at the district level.
+
+```{r}
+#| label: fig-explore
+
+# Figure 1: Violations by percent Hispanic bins
+fig1 <- drinking_water %>%
+  group_by(pcthisp_bin) %>%
+  summarise(prop_violation = mean(violation, na.rm = TRUE)) %>%
+  ggplot(aes(x = pcthisp_bin, y = prop_violation)) +
+  geom_point(size = 3) +
+  labs(x = "Percent Hispanic (binned)",
+       y = "Proportion with SDWA violations",
+       title = "SDWA Violations by Percent Hispanic") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+# Figure 2: Violations by percent poverty bins
+fig2 <- drinking_water %>%
+  group_by(pctpov_bin) %>%
+  summarise(prop_violation = mean(violation, na.rm = TRUE)) %>%
+  ggplot(aes(x = pctpov_bin, y = prop_violation)) +
+  geom_point(size = 3) +
+  labs(x = "Percent Below Poverty (binned)",
+       y = "Proportion with SDWA violations",
+       title = "SDWA Violations by Percent Below Poverty") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+# Figure 3: Correlation between race and class
+fig3 <- ggplot(drinking_water, aes(x = pcthisp, y = pctpov)) +
+  geom_point(alpha = 0.3) +
+  geom_smooth(method = "lm", se = TRUE) +
+  labs(x = "Percent Hispanic",
+       y = "Percent Below Poverty",
+       title = "Relationship Between Race and Class")
+
+fig1
+fig2
+fig3
+
+```
+
+## Fit and interpret model
+
+Our question is:
+
+*How are SDWA violations distributed among communities by class and race?*
+
+Let's begin by investigating class in isolation. **Fit a logistic model to see how `violation` responds to `pctpov`**.
+
+```{r}
+#| label: fit-model-class
+
+# Fit logistic regression model
+class_model <- glm(violation ~ pctpov,
+                   data = drinking_water,
+                   family = binomial(link = "logit"))
+
+# View results
+summary(class_model)
+confint(class_model)
+
+```
+
+**What is the best estimate for the % Below Poverty coefficient?**
+
+The coefficient estimate is shown in the summary output (approximately 0.02-0.03).
+
+**Is the coefficient significantly different than 0? Assume critical threshold of 0.05.**
+
+Yes, if the p-value is less than 0.05 (check the Pr(\>\|z\|) column).
+
+**What is the 95% CI for the coefficient?**
+
+The 95% CI is shown from the `confint()` output.
+
+**Based on the sign, what is the relationship between class and SDWA violations?**
+
+If the coefficient is positive, higher poverty rates are associated with higher probability of SDWA violations.
+
+## Make predictions
+
+Interpreting the coefficients directly is pretty difficult with logistic regression! What is the difference between a coefficient of 0.1 and 0.2? Rather than interpreting the coefficient directly, it's often easier to compare predictions.
+
+Once you have a model, you can make predictions using `predict()`. When calling `predict()`, the following parameters are important:
+
+-   `object` The model you want to generate predictions from
+
+-   `newdata` A data frame of predictors your want predictions for
+
+-   `type` Do you want predictions on the *link* or *response* scale? By default, `predict()` shows the value of $logit(p) = \beta_0 + \beta_1 x$ (i.e., link-scale). To get the predicted *probability* (i.e., response-scale) set `type` to "response".
+
+-   `se.fit` If `se.fit` is `TRUE`, `predict()` will calculate the confidence interval of the response on the link scale. You can use that to get the confidence interval of $p$. That will make a ribbon, similar to the confidence interval of $\mu$ you saw in linear regression.
+
+Here's how to generate predictions (with CI) for a single predictor.
+
+::: callout-tip
+I use `expand_grid()` instead of `tibble()` when making the data frame of predictors because it gives you every combination of the values in the columns. That will be important when you have more than one predictor!
+:::
+
+```{r}
+#| label: predict-class-model
+
+# Create predictor grid
+new_data <- expand_grid(
+  pctpov = seq(min(drinking_water$pctpov, na.rm = TRUE),
+               max(drinking_water$pctpov, na.rm = TRUE),
+               length.out = 100)
+)
+
+# Generate predictions (best estimate only)
+predictions <- new_data %>%
+  mutate(pred_prob = predict(class_model, 
+                              newdata = new_data, 
+                              type = "response"))
+
+```
+
+```{r}
+#| label: plot-class-best-estimate
+
+# Plot best estimate
+ggplot() +
+  geom_point(data = drinking_water, 
+             aes(x = pctpov, y = violation), 
+             alpha = 0.2) +
+  geom_line(data = predictions, 
+            aes(x = pctpov, y = pred_prob),
+            color = "blue", linewidth = 1) +
+  labs(x = "Percent Below Poverty",
+       y = "Probability of SDWA Violation",
+       title = "Predicted Probability of SDWA Violation by Poverty Rate")
+
+```
+
+That was just the best estimate. The following code adds the 95% CI for $p$. It uses the *inverse link function* to go from link-scale to response-scale.
+
+::: callout-caution
+When constructing the 95% CI for $p$, one thing remains the same and one thing has changed from constructing the 95% CI for $\mu$.
+
+**What remains the same:** the sampling distribution is normal, so once you have the standard error you can use `qnorm()` to get the 2.5% and 97.5% quantiles.
+
+**What's different:** the sampling distribution exists on the *link scale*. In other words, the standard error is $SE(logit(p))$ rather than $SE(p)$. So you have to get the best estimate and standard error on the link scale, then invert the link function to get back to $p$.
+:::
+
+```{r}
+#| label: predict-class-model-ci
+
+# Get predictions on link scale with standard errors
+link_predictions <- predict(class_model, 
+                             newdata = new_data, 
+                             type = "link", 
+                             se.fit = TRUE)
+
+# Calculate 95% CI on link scale, then inverse transform
+predictions_ci <- new_data %>%
+  mutate(
+    fit_link = link_predictions$fit,
+    se_link = link_predictions$se.fit,
+    # Best estimate
+    pred_prob = plogis(fit_link),
+    # Lower CI: fit - 1.96*SE, then inverse logit
+    lower = plogis(fit_link - 1.96 * se_link),
+    # Upper CI: fit + 1.96*SE, then inverse logit
+    upper = plogis(fit_link + 1.96 * se_link)
+  )
+
+```
+
+And here's the fit with the 95% CI presented as the familiar ribbon.
+
+```{r}
+#| label: plot-class-ci
+
+ggplot() +
+  geom_point(data = drinking_water, 
+             aes(x = pctpov, y = violation), 
+             alpha = 0.2) +
+  geom_ribbon(data = predictions_ci,
+              aes(x = pctpov, ymin = lower, ymax = upper),
+              alpha = 0.3, fill = "blue") +
+  geom_line(data = predictions_ci, 
+            aes(x = pctpov, y = pred_prob),
+            color = "blue", linewidth = 1) +
+  labs(x = "Percent Below Poverty",
+       y = "Probability of SDWA Violation",
+       title = "Predicted Probability with 95% CI")
+
+```
+
+**What is the probability of a SDWA violation in a district where 5% of households are below the poverty line? When 50% are? Show the best estimate and 95% CI.**
+
+```{r}
+#| label: class-estimate-ci
+
+# Create specific predictions for 5% and 50% poverty
+specific_preds <- expand_grid(pctpov = c(5, 50))
+
+link_specific <- predict(class_model, 
+                         newdata = specific_preds, 
+                         type = "link", 
+                         se.fit = TRUE)
+
+results <- specific_preds %>%
+  mutate(
+    pred_prob = plogis(link_specific$fit),
+    lower = plogis(link_specific$fit - 1.96 * link_specific$se.fit),
+    upper = plogis(link_specific$fit + 1.96 * link_specific$se.fit)
+  )
+
+print(results)
+
+```
+
+## Your turn
+
+Switzer and Teodoro demonstrated that the *interaction* between race and class is important for understanding the environmental justice dimensions of drinking water. You'll investigate that here through the following steps.
+
+1.  Create a new model with an interaction term between `pctpov` and `pcthisp`.
+2.  Use the summary and confidence intervals to answer the following questions:\
+    **What is the 95% CI for the % Hispanic coefficient?**\
+    **Is the interaction between class and race significantly different than 0?**
+3.  Create a new predictor data frame with combinations of *both* predictors.
+4.  Generate predictions, including both the best estimate and 95% CI.
+5.  Plot the predictions. In your plot, put `pcthisp` on the x-axis and probability of SDWA violations on the y-axis. Indicate `pctpov` using color and fill. To make this work, you'll have to filter your predictions to a few levels of `pctpov` (e.g., 0, 25, 50, and 75).
+
+```{r}
+#| label: your-turn
+
+# 1. Fit model with interaction
+interaction_model <- glm(violation ~ pctpov * pcthisp,
+                         data = drinking_water,
+                         family = binomial(link = "logit"))
+
+# 2. View summary and CI
+summary(interaction_model)
+confint(interaction_model)
+
+# 3. Create predictor grid with both variables
+new_data_interaction <- expand_grid(
+  pctpov = seq(0, 75, by = 5),
+  pcthisp = seq(min(drinking_water$pcthisp, na.rm = TRUE),
+                max(drinking_water$pcthisp, na.rm = TRUE),
+                length.out = 100)
+)
+
+# 4. Generate predictions with CI
+link_int_preds <- predict(interaction_model, 
+                          newdata = new_data_interaction, 
+                          type = "link", 
+                          se.fit = TRUE)
+
+predictions_interaction <- new_data_interaction %>%
+  mutate(
+    pred_prob = plogis(link_int_preds$fit),
+    lower = plogis(link_int_preds$fit - 1.96 * link_int_preds$se.fit),
+    upper = plogis(link_int_preds$fit + 1.96 * link_int_preds$se.fit)
+  )
+
+# 5. Plot predictions for select poverty levels
+predictions_plot <- predictions_interaction %>%
+  filter(pctpov %in% c(0, 25, 50, 75)) %>%
+  mutate(pctpov_label = paste0(pctpov, "% poverty"))
+
+ggplot(predictions_plot, 
+       aes(x = pcthisp, y = pred_prob, 
+           color = pctpov_label, fill = pctpov_label)) +
+  geom_ribbon(aes(ymin = lower, ymax = upper), alpha = 0.2) +
+  geom_line(linewidth = 1) +
+  scale_color_viridis_d(name = "Poverty Level") +
+  scale_fill_viridis_d(name = "Poverty Level") +
+  labs(x = "Percent Hispanic",
+       y = "Probability of SDWA Violation",
+       title = "Predicted Probability by Race and Class") +
+  theme(legend.position = "bottom")
+
+```
+
+The coefficient for an interaction term in a logistic regression model is very difficult to interpret on its own! But that value has important consequences for the lives of millions of people. Predictions are usually more straightforward to interpret than coefficients. Use your figure and the outputs of `summary()` and `confint()` to reflect on the following prompt. Reply to the corresponding thread on Slack with your reflection to get 1 token.
+
+**In plain language, what is the relationship between race, class, and SDWA violations? Which communities face the greatest risks associated with drinking water? How would you use the statistical outputs (model summary, prediction figure) to describe that risk quantitatively? How could those statistical outputs be misinterpreted?**
